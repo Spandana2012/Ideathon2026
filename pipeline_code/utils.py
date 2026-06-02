@@ -36,9 +36,10 @@ OUTPUT_DIR = os.getenv(
 # -------------------------------------------------
 ZOOM_LEVEL = int(os.getenv("ZOOM_LEVEL", "20"))
 
-SCALE = 2
-IMG_SIZE = 1024
+SCALE = int(os.getenv("MAP_SCALE", "1"))
+IMG_SIZE = int(os.getenv("IMG_SIZE", "640"))
 CENTER = (IMG_SIZE // 2, IMG_SIZE // 2)
+ENABLE_SAHI = os.getenv("ENABLE_SAHI", "false").lower() == "true"
 
 YOLO_CONF = 0.25
 MIN_PIXELS = 100

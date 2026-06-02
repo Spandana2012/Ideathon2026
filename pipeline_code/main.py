@@ -12,7 +12,8 @@ from .utils import (
     OUTPUT_DIR,
     ZOOM_LEVEL,
     YOLO_CONF,
-    CENTER
+    CENTER,
+    ENABLE_SAHI
 )
 
 from .image_fetcher import fetch_image
@@ -56,8 +57,8 @@ def run_single_pipeline(lat, lon, sample_id, output_dir):
         inference_mode = "ENHANCED"
         buffer_mask, best_mask, buffer_sqft, r1200, r2400 = select_masks(masks, lat)
 
-    # SAHI fallback
-    if best_mask is None:
+    # SAHI can be memory-heavy on small Render instances, so keep it opt-in.
+    if best_mask is None and ENABLE_SAHI:
         masks, confs = run_sahi(MODEL_PATH, img_path, YOLO_CONF + 0.05)
         inference_mode = "SAHI"
         buffer_mask, best_mask, buffer_sqft, r1200, r2400 = select_masks(masks, lat)
