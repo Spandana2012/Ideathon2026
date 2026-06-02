@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: helio-yajna-solar-detection
+    env: docker
+    plan: starter
+    autoDeploy: false
+    envVars:
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: YOLO_CONFIG_DIR
+        value: /tmp/Ultralytics
+      - key: PYTHONUNBUFFERED
+        value: "1"

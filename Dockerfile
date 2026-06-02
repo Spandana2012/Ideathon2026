@@ -21,5 +21,6 @@ COPY . /app
 
 ENV PYTHONUNBUFFERED=1
 ENV YOLO_CONFIG_DIR=/tmp/Ultralytics
+ENV PORT=8000
 
-CMD ["python", "-m", "pipeline_code.main"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]

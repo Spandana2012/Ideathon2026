@@ -1,5 +1,6 @@
 import os
 import cv2
+import json
 import numpy as np
 import pandas as pd
 from ultralytics import YOLO
@@ -22,96 +23,71 @@ from .overlay import draw_overlay
 from .json_writer import write_json
 from .image_enhancer import enhance_image
 from .sahi_inference import run_sahi
+
+# -------------------------------------------------
+# ENV + MODEL LOAD (ONCE)
+# -------------------------------------------------
 load_dotenv()
 API_KEY = os.getenv("GOOGLE_API_KEY")
 
 model = YOLO(MODEL_PATH)
-df = pd.read_excel(INPUT_FILE)
 
-IMG_DIR = os.path.join(OUTPUT_DIR, "artefacts", "test")
-JSON_DIR = os.path.join(OUTPUT_DIR, "prediction_files", "test")
+# =================================================
+# 🔹 SINGLE LOCATION PIPELINE (FOR WEBSITE)
+# =================================================
+def run_single_pipeline(lat, lon, sample_id, output_dir):
+    img_path = os.path.join(output_dir, f"{sample_id}.jpg")
 
-os.makedirs(IMG_DIR, exist_ok=True)
-os.makedirs(JSON_DIR, exist_ok=True)
-for _, row in df.iterrows():
-    sid = row["sample_id"]          
-    lat, lon = row["latitude"], row["longitude"]
+    fetch_image(sample_id, lat, lon, API_KEY, img_path)
 
-    print(f"\n[INFO] Processing sample_id: {sid}")
-
-    img_path = os.path.join(IMG_DIR, f"{sid}.jpg")
-    fetch_image(sid, lat, lon, API_KEY, img_path)
     masks, confs = run_inference(model, img_path)
     inference_mode = "PRIMARY"
 
-    buffer_mask, buffer_sqft, r1200, r2400 = select_masks(masks,lat)
+    buffer_mask, best_mask, buffer_sqft, r1200, r2400 = select_masks(masks, lat)
 
-    inside_count = 0
-    if buffer_mask is not None and masks:
-        stacked = np.stack(masks)
-        inside_count = np.any(stacked & buffer_mask, axis=(1,2)).sum()
-    enhanced_path = None
-    if inside_count == 0:
-        print("[INFO] No detections inside buffer → applying image enhancement")
-
+    # Enhancement fallback
+    if best_mask is None:
         img = cv2.imread(img_path)
         enhanced = enhance_image(img)
-
         enhanced_path = img_path.replace(".jpg", "_enhanced.jpg")
         cv2.imwrite(enhanced_path, enhanced)
 
         masks, confs = run_inference(model, enhanced_path)
         inference_mode = "ENHANCED"
+        buffer_mask, best_mask, buffer_sqft, r1200, r2400 = select_masks(masks, lat)
 
-        buffer_mask, buffer_sqft, r1200, r2400 = select_masks(masks,lat)
-        if buffer_mask is not None and masks:
-            stacked = np.stack(masks)
-            inside_count = np.any(stacked & buffer_mask, axis=(1,2)).sum()
-        else:
-            inside_count = 0
-
-    if inside_count == 0:
-        print("[INFO] Still no detections inside buffer → running SAHI slicing")
-
-        masks, confs = run_sahi(
-            MODEL_PATH,
-            enhanced_path if enhanced_path else img_path,
-            YOLO_CONF + 0.05
-        )
+    # SAHI fallback
+    if best_mask is None:
+        masks, confs = run_sahi(MODEL_PATH, img_path, YOLO_CONF + 0.05)
         inference_mode = "SAHI"
+        buffer_mask, best_mask, buffer_sqft, r1200, r2400 = select_masks(masks, lat)
 
-        buffer_mask, buffer_sqft, r1200, r2400 = select_masks(masks,lat)
+    total_area, dist = 0.0, 0.0
+    best_conf = max(confs) if confs else 0.0
+
     green, red = [], []
-    total_area, dist, best_conf = 0.0, 0.0, 0.0
 
-    for m, c in zip(masks, confs):
-        if buffer_mask is not None and (m & buffer_mask).any():
-            green.append(m)
-            a, d = area_and_distance(m,lat)
-            total_area += a
-            dist = d
-            best_conf = max(best_conf, c)
-        else:
-            red.append(m)
+    if best_mask is not None:
+        total_area, dist = area_and_distance(best_mask, buffer_mask, lat)
+
+        green = [best_mask]
+    else:
+        red = masks
+
     img = cv2.imread(img_path)
     draw_overlay(img, green, red, r1200, r2400)
-    cv2.imwrite(os.path.join(IMG_DIR, f"{sid}_overlay.jpg"), img)
-    if green:
-        print(f"[RESULT] SOLAR DETECTED (buffer={buffer_sqft} sqft, area={round(total_area,2)} m²)")
-    else:
-        print("[RESULT] NO SOLAR DETECTED")
+    cv2.imwrite(os.path.join(output_dir, f"{sample_id}_overlay.jpg"), img)
 
-    print(f"[INFO] Inference mode used: {inference_mode}")
     json_data = {
-        "sample_id": sid,
+        "sample_id": sample_id,
         "lat": lat,
         "lon": lon,
-        "has_solar": len(green) > 0,
+        "has_solar": best_mask is not None,
         "confidence": round(best_conf, 2),
         "buffer_radius_sqft": buffer_sqft,
         "pv_area_sqm_est": round(total_area, 2),
-        "euclidean_distance_m_est": dist,
-        "qc_status": "VERIFIABLE",
+        "euclidean_distance_m_est": round(dist, 2),
+        "qc_status": "VERIFIABLE" if best_mask is not None else "NOT_VERIFIABLE",
         "bbox_or_mask": "mask",
         "image_metadata": {
             "source": "Google Static Maps",
@@ -120,6 +96,51 @@ for _, row in df.iterrows():
         }
     }
 
-    write_json(os.path.join(JSON_DIR, f"{sid}.json"), json_data)
 
-print("\n✅ Pipeline completed successfully")
+    json_path = os.path.join(output_dir, "result.json")
+    write_json(json_path, json_data)
+    return json_data
+
+# =================================================
+# 🔹 BATCH PIPELINE (EXCEL MODE – ORIGINAL BEHAVIOR)
+# =================================================
+def run_batch_pipeline():
+    """
+    Runs original Excel-based batch inference.
+    """
+
+    df = pd.read_excel(INPUT_FILE)
+
+    IMG_DIR = os.path.join(OUTPUT_DIR, "artefacts", "test")
+    JSON_DIR = os.path.join(OUTPUT_DIR, "prediction_files", "test")
+
+    os.makedirs(IMG_DIR, exist_ok=True)
+    os.makedirs(JSON_DIR, exist_ok=True)
+    print("[DEBUG] OUTPUT_DIR:", OUTPUT_DIR)
+
+    for _, row in df.iterrows():
+        sid = str(row["sample_id"]).strip()
+        lat = float(row["latitude"])
+        lon = float(row["longitude"])
+
+        print(f"\n[INFO] Processing sample_id: {sid}")
+
+        out_dir = os.path.join(IMG_DIR, sid)
+        os.makedirs(out_dir, exist_ok=True)
+
+        result_json = run_single_pipeline(
+            lat=lat,
+            lon=lon,
+            sample_id=sid,
+            output_dir=out_dir
+        )
+        json_out = os.path.join(JSON_DIR, f"{sid}.json")
+        write_json(json_out, result_json)
+
+    print("\n✅ Pipeline completed successfully")
+
+# =================================================
+# 🔒 SAFE ENTRY POINT
+# =================================================
+if __name__ == "__main__":
+    run_batch_pipeline()

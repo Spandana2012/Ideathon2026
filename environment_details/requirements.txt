@@ -14,3 +14,7 @@ tqdm
 pyyaml
 roboflow
 openpyxl
+fastapi
+uvicorn
+jinja2
+python-multipart
