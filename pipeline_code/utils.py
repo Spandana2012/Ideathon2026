@@ -18,7 +18,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # -------------------------------------------------
 MODEL_PATH = os.getenv(
     "MODEL_PATH",
-    os.path.join(BASE_DIR, "trained_model", "model.pt")
+    os.path.join(BASE_DIR, "trained_model", "weights.pt")
 )
 
 INPUT_FILE = os.getenv(
