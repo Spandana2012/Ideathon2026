@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import os
 import time
+import traceback
 from uuid import uuid4
 
 from pipeline_code.main import run_single_pipeline
@@ -28,12 +29,17 @@ def analyze(data: InputSchema):
     output_dir = os.path.join("output_data", sample_id)
     os.makedirs(output_dir, exist_ok=True)
 
-    result_json = run_single_pipeline(
-        lat=data.lat,
-        lon=data.lon,
-        sample_id=sample_id,
-        output_dir=output_dir
-    )
+    try:
+        result_json = run_single_pipeline(
+            lat=data.lat,
+            lon=data.lon,
+            sample_id=sample_id,
+            output_dir=output_dir
+        )
+    except Exception as exc:
+        print(traceback.format_exc(), flush=True)
+        raise HTTPException(status_code=500, detail=str(exc) or "Analysis failed.") from exc
+
     return {
         "sample_id": sample_id,
         "status": result_json["qc_status"],
