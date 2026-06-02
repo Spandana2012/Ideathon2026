@@ -2,7 +2,6 @@ import os
 import cv2
 import json
 import numpy as np
-import pandas as pd
 from ultralytics import YOLO
 from dotenv import load_dotenv
 
@@ -23,7 +22,6 @@ from .area_estimation import area_and_distance
 from .overlay import draw_overlay
 from .json_writer import write_json
 from .image_enhancer import enhance_image
-from .sahi_inference import run_sahi
 
 # -------------------------------------------------
 # ENV + MODEL LOAD (ONCE)
@@ -59,6 +57,8 @@ def run_single_pipeline(lat, lon, sample_id, output_dir):
 
     # SAHI can be memory-heavy on small Render instances, so keep it opt-in.
     if best_mask is None and ENABLE_SAHI:
+        from .sahi_inference import run_sahi
+
         masks, confs = run_sahi(MODEL_PATH, img_path, YOLO_CONF + 0.05)
         inference_mode = "SAHI"
         buffer_mask, best_mask, buffer_sqft, r1200, r2400 = select_masks(masks, lat)
@@ -109,6 +109,7 @@ def run_batch_pipeline():
     """
     Runs original Excel-based batch inference.
     """
+    import pandas as pd
 
     df = pd.read_excel(INPUT_FILE)
 
