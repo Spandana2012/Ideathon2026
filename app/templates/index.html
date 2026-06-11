@@ -4,10 +4,26 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Helio Yajna - Rooftop Solar Detection</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800;900&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-    <link rel="stylesheet" href="/static/style.css?v=4">
+    <link rel="stylesheet" href="/static/style.css?v=5">
 </head>
 <body>
+    <div id="loading-overlay" class="loading-overlay" aria-live="polite" aria-hidden="true">
+        <div class="loading-card">
+            <div class="solar-spinner" aria-hidden="true"></div>
+            <div class="loading-copy">
+                <span class="loading-kicker">Solar intelligence running</span>
+                <strong id="loading-message">Fetching satellite imagery...</strong>
+            </div>
+            <div class="progress-track">
+                <span></span>
+            </div>
+        </div>
+    </div>
+
     <div class="page-shell">
         <header class="hero-card">
             <div class="hero-copy">
@@ -22,31 +38,35 @@
             </div>
             <div class="hero-visual">
                 <img src="/static/solar-hero-bg.png" alt="Rooftop solar panels in sunrise light">
-                <div class="hero-badge">Rooftop solar detection for every selected location</div>
+                <div class="hero-badge">
+                    <span>Live rooftop assessment</span>
+                    <strong>AI geospatial verification</strong>
+                </div>
             </div>
         </header>
 
         <main class="container">
             <section class="panel-grid" aria-label="Solar analysis controls">
-                <div class="analysis-panel">
+                <div class="analysis-panel glass-panel">
                     <div class="panel-header">
-                        <h2>Start analysis</h2>
+                        <span class="section-kicker">Coordinate input</span>
+                        <h2>Start Analysis</h2>
                         <p>Enter coordinates or tap the map. Results appear with imagery, metrics, and the exact JSON output.</p>
                     </div>
 
                     <div class="input-grid">
-                        <label>
+                        <label class="field">
+                            <input id="lat" type="number" step="any" min="-90" max="90" placeholder=" " autocomplete="off">
                             <span>Latitude</span>
-                            <input id="lat" type="number" step="any" min="-90" max="90" placeholder="18.5204" autocomplete="off">
                         </label>
-                        <label>
+                        <label class="field">
+                            <input id="lon" type="number" step="any" min="-180" max="180" placeholder=" " autocomplete="off">
                             <span>Longitude</span>
-                            <input id="lon" type="number" step="any" min="-180" max="180" placeholder="73.8567" autocomplete="off">
                         </label>
                     </div>
 
                     <div class="control-row">
-                        <button id="run-button" onclick="runAnalysis()">Run Analysis</button>
+                        <button id="run-button" class="primary-button" onclick="runAnalysis()"><span>Run Analysis</span></button>
                         <button class="secondary" onclick="resetSelection()">Reset</button>
                     </div>
 
@@ -55,13 +75,17 @@
                     </div>
                 </div>
 
-                <div class="map-panel">
+                <div class="map-panel glass-panel">
                     <div class="panel-header">
-                        <h2>Click-to-select map</h2>
+                        <span class="section-kicker">Geospatial target</span>
+                        <h2>Click-to-Select Map</h2>
                         <p>Tap the map to set coordinates for analysis.</p>
                     </div>
                     <div id="map" class="map-box"></div>
-                    <div class="map-footer">Selected location: <span id="selected-location">Not set</span></div>
+                    <div class="map-footer">
+                        <span class="map-footer-label">Selected location</span>
+                        <strong id="selected-location">Not set</strong>
+                    </div>
                 </div>
             </section>
 
@@ -70,6 +94,6 @@
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-    <script src="/static/script.js?v=4"></script>
+    <script src="/static/script.js?v=5"></script>
 </body>
 </html>

@@ -7,10 +7,14 @@ const lonInput = document.getElementById("lon");
 const resultsDiv = document.getElementById("results");
 const runButton = document.getElementById("run-button");
 const mapBox = document.getElementById("map");
+const loadingOverlay = document.getElementById("loading-overlay");
+const loadingMessage = document.getElementById("loading-message");
+let loadingTimer = null;
 
 mapBox.style.minHeight = "380px";
 mapBox.style.display = "block";
 initMap();
+wireButtonRipple();
 
 function initMap() {
     if (!window.L) {
@@ -60,6 +64,8 @@ function setLocation(lat, lon) {
     latInput.value = normalized.lat.toFixed(6);
     lonInput.value = normalized.lng.toFixed(6);
     selectedLocationText.textContent = `${normalized.lat.toFixed(6)}, ${normalized.lng.toFixed(6)}`;
+    selectedLocationText.closest(".map-footer")?.classList.add("updated");
+    window.setTimeout(() => selectedLocationText.closest(".map-footer")?.classList.remove("updated"), 650);
 
     if (!map) {
         return;
@@ -120,7 +126,8 @@ async function runAnalysis() {
     }
 
     runButton.disabled = true;
-    showStatusMessage("Running analysis... This can take a few moments.");
+    showLoading();
+    showStatusMessage("Fetching satellite imagery and preparing rooftop analysis...");
 
     try {
         const response = await fetch("/analyze", {
@@ -141,6 +148,7 @@ async function runAnalysis() {
         showError(error.message || "Unable to complete analysis.");
     } finally {
         runButton.disabled = false;
+        hideLoading();
     }
 }
 
@@ -154,13 +162,18 @@ function showError(message) {
 
 function renderResult(data, lat, lon) {
     const statusClass = data.has_solar ? "ok" : "warn";
-    const confidence = formatNumber(data.confidence);
+    const confidenceNumber = Number(data.confidence);
+    const confidence = formatNumber(confidenceNumber);
+    const confidencePercent = clamp(Number.isFinite(confidenceNumber) ? confidenceNumber * 100 : 0, 0, 100);
     const area = formatNumber(data.area);
     const distance = formatNumber(data.distance);
     const jsonOutput = escapeHtml(JSON.stringify(data.json_output || data, null, 2));
     const verdict = data.has_solar
         ? "Solar panels detected in the selected rooftop buffer."
         : "No verifiable solar panel was detected for this location.";
+    const detectedLabel = data.has_solar ? "Detected" : "Not detected";
+    const bufferLabel = data.status || "UNKNOWN";
+    const statusTone = data.has_solar ? "success" : "warning";
 
     resultsDiv.innerHTML = `
         <div class="result-card">
@@ -172,34 +185,44 @@ function renderResult(data, lat, lon) {
                 <span class="badge ${statusClass}">${escapeHtml(data.status || "UNKNOWN")}</span>
             </div>
 
-            <div class="result-summary">
-                <div>
-                    <span>Solar detected</span>
-                    <strong>${data.has_solar ? "Yes" : "No"}</strong>
-                </div>
-                <div>
-                    <span>Saved report</span>
-                    <strong>${escapeHtml(data.sample_id || "N/A")}</strong>
-                </div>
-            </div>
+            <div class="result-metrics">
+                <article class="metric-card summary-card">
+                    <span>Result summary</span>
+                    <strong>${escapeHtml(detectedLabel)}</strong>
+                    <p>Sample ${escapeHtml(data.sample_id || "WEB")} processed at ${lat.toFixed(6)}, ${lon.toFixed(6)} using ${escapeHtml(data.inference_mode || "N/A")} inference.</p>
+                </article>
 
-            <div class="meta">
-                <div>
-                    <span>Confidence</span>
-                    <strong>${confidence}</strong>
-                </div>
-                <div>
-                    <span>PV Area (sqm)</span>
-                    <strong>${area}</strong>
-                </div>
-                <div>
-                    <span>Distance (m)</span>
-                    <strong>${distance}</strong>
-                </div>
-                <div>
-                    <span>Inference mode</span>
-                    <strong>${escapeHtml(data.inference_mode || "N/A")}</strong>
-                </div>
+                <article class="metric-card ${statusTone}">
+                    <span class="metric-label">Solar detection status</span>
+                    <strong class="metric-value">${data.has_solar ? "Yes" : "No"}</strong>
+                    <div class="metric-track" style="--value: ${data.has_solar ? "100%" : "22%"}"><span></span></div>
+                </article>
+
+                <article class="metric-card">
+                    <span class="metric-label">Confidence score</span>
+                    <div class="ring-wrap">
+                        <div class="progress-ring" style="--value: ${confidencePercent}%"></div>
+                        <strong class="ring-value">${confidence}</strong>
+                    </div>
+                </article>
+
+                <article class="metric-card">
+                    <span class="metric-label">Area estimation</span>
+                    <strong class="metric-value">${area}</strong>
+                    <div class="metric-track" style="--value: ${areaMetricWidth(data.area)}"><span></span></div>
+                </article>
+
+                <article class="metric-card">
+                    <span class="metric-label">Buffer verification</span>
+                    <strong class="metric-value">${escapeHtml(bufferLabel)}</strong>
+                    <div class="metric-track" style="--value: ${data.has_solar ? "100%" : "35%"}"><span></span></div>
+                </article>
+
+                <article class="metric-card">
+                    <span class="metric-label">Distance from center</span>
+                    <strong class="metric-value">${distance} m</strong>
+                    <div class="metric-track" style="--value: ${distanceMetricWidth(data.distance)}"><span></span></div>
+                </article>
             </div>
 
             <div class="images">
@@ -222,6 +245,52 @@ function renderResult(data, lat, lon) {
             </div>
         </div>
     `;
+}
+
+function showLoading() {
+    const messages = [
+        "Fetching satellite imagery...",
+        "Running segmentation...",
+        "Applying buffer verification...",
+        "Generating report..."
+    ];
+    let index = 0;
+
+    if (!loadingOverlay || !loadingMessage) {
+        return;
+    }
+
+    loadingMessage.textContent = messages[index];
+    loadingOverlay.classList.add("active");
+    loadingOverlay.setAttribute("aria-hidden", "false");
+
+    window.clearInterval(loadingTimer);
+    loadingTimer = window.setInterval(() => {
+        index = (index + 1) % messages.length;
+        loadingMessage.textContent = messages[index];
+    }, 1300);
+}
+
+function hideLoading() {
+    window.clearInterval(loadingTimer);
+    loadingTimer = null;
+
+    if (!loadingOverlay) {
+        return;
+    }
+
+    loadingOverlay.classList.remove("active");
+    loadingOverlay.setAttribute("aria-hidden", "true");
+}
+
+function wireButtonRipple() {
+    document.querySelectorAll("button").forEach(button => {
+        button.addEventListener("pointermove", event => {
+            const rect = button.getBoundingClientRect();
+            button.style.setProperty("--x", `${event.clientX - rect.left}px`);
+            button.style.setProperty("--y", `${event.clientY - rect.top}px`);
+        });
+    });
 }
 
 function normalizeLatLng(lat, lon) {
@@ -260,6 +329,30 @@ function formatNumber(value) {
     }
 
     return number.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function areaMetricWidth(value) {
+    const number = Number(value);
+
+    if (!Number.isFinite(number) || number <= 0) {
+        return "18%";
+    }
+
+    return `${clamp(number / 2, 24, 100)}%`;
+}
+
+function distanceMetricWidth(value) {
+    const number = Number(value);
+
+    if (!Number.isFinite(number) || number <= 0) {
+        return "18%";
+    }
+
+    return `${clamp(100 - number, 22, 100)}%`;
+}
+
+function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
 }
 
 function escapeHtml(value) {

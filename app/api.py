@@ -3,11 +3,13 @@ from pydantic import BaseModel
 import os
 import time
 import traceback
+from threading import Lock
 from uuid import uuid4
 
 from pipeline_code.main import run_single_pipeline
 
 router = APIRouter()
+analysis_lock = Lock()
 
 
 # ✅ DEFINE INPUT SCHEMA
@@ -30,12 +32,23 @@ def analyze(data: InputSchema):
     os.makedirs(output_dir, exist_ok=True)
 
     try:
-        result_json = run_single_pipeline(
-            lat=data.lat,
-            lon=data.lon,
-            sample_id=sample_id,
-            output_dir=output_dir
-        )
+        if not analysis_lock.acquire(blocking=False):
+            raise HTTPException(
+                status_code=429,
+                detail="Another analysis is already running. Please try again in a few moments.",
+            )
+
+        try:
+            result_json = run_single_pipeline(
+                lat=data.lat,
+                lon=data.lon,
+                sample_id=sample_id,
+                output_dir=output_dir
+            )
+        finally:
+            analysis_lock.release()
+    except HTTPException:
+        raise
     except Exception as exc:
         print(traceback.format_exc(), flush=True)
         raise HTTPException(status_code=500, detail=str(exc) or "Analysis failed.") from exc

@@ -2,6 +2,7 @@ import os
 import cv2
 import json
 import numpy as np
+import torch
 from ultralytics import YOLO
 from dotenv import load_dotenv
 
@@ -28,6 +29,9 @@ from .image_enhancer import enhance_image
 # -------------------------------------------------
 load_dotenv()
 API_KEY = os.getenv("GOOGLE_API_KEY")
+
+torch.set_num_threads(int(os.getenv("TORCH_NUM_THREADS", "1")))
+torch.set_num_interop_threads(int(os.getenv("TORCH_NUM_INTEROP_THREADS", "1")))
 
 model = YOLO(MODEL_PATH)
 
