@@ -10,6 +10,7 @@ const mapBox = document.getElementById("map");
 const loadingOverlay = document.getElementById("loading-overlay");
 const loadingMessage = document.getElementById("loading-message");
 let loadingTimer = null;
+const ANALYSIS_TIMEOUT_MS = 120000;
 
 mapBox.style.minHeight = "380px";
 mapBox.style.display = "block";
@@ -129,24 +130,29 @@ async function runAnalysis() {
     showLoading();
     showStatusMessage("Fetching satellite imagery and preparing rooftop analysis...");
 
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), ANALYSIS_TIMEOUT_MS);
+
     try {
         const response = await fetch("/analyze", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ lat: latNumber, lon: lonNumber })
+            body: JSON.stringify({ lat: latNumber, lon: lonNumber }),
+            signal: controller.signal
         });
 
         if (!response.ok) {
             const errorText = await response.text();
-            throw new Error(parseApiError(errorText) || "Server error while running analysis.");
+            throw new Error(parseApiError(errorText, response.status) || "Server error while running analysis.");
         }
 
         const data = await response.json();
         renderResult(data, latNumber, lonNumber);
     } catch (error) {
         console.error(error);
-        showError(error.message || "Unable to complete analysis.");
+        showError(formatAnalysisError(error));
     } finally {
+        window.clearTimeout(timeoutId);
         runButton.disabled = false;
         hideLoading();
     }
@@ -312,13 +318,29 @@ function isValidLatLng(lat, lon) {
     return lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180;
 }
 
-function parseApiError(errorText) {
+function parseApiError(errorText, statusCode) {
+    if (statusCode === 503) {
+        return "Render returned 503 while running analysis. The service likely restarted or ran out of memory. Try again after redeploying with IMG_SIZE=512 and ENABLE_SAHI=false.";
+    }
+
+    if (statusCode === 429) {
+        return "Another analysis is already running. Please wait a few moments and try again.";
+    }
+
     try {
         const parsed = JSON.parse(errorText);
         return parsed.detail || errorText;
     } catch {
         return errorText;
     }
+}
+
+function formatAnalysisError(error) {
+    if (error?.name === "AbortError") {
+        return "Analysis timed out after 120 seconds. Render may still be restarting or the instance may not have enough memory for this request.";
+    }
+
+    return error?.message || "Unable to complete analysis.";
 }
 
 function formatNumber(value) {

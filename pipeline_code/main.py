@@ -1,5 +1,6 @@
 import os
 import cv2
+import gc
 import json
 import numpy as np
 import torch
@@ -32,6 +33,7 @@ API_KEY = os.getenv("GOOGLE_API_KEY")
 
 torch.set_num_threads(int(os.getenv("TORCH_NUM_THREADS", "1")))
 torch.set_num_interop_threads(int(os.getenv("TORCH_NUM_INTEROP_THREADS", "1")))
+cv2.setNumThreads(0)
 
 model = YOLO(MODEL_PATH)
 
@@ -47,6 +49,7 @@ def run_single_pipeline(lat, lon, sample_id, output_dir):
     inference_mode = "PRIMARY"
 
     buffer_mask, best_mask, buffer_sqft, r1200, r2400 = select_masks(masks, lat)
+    gc.collect()
 
     # Enhancement fallback
     if best_mask is None:
@@ -58,6 +61,8 @@ def run_single_pipeline(lat, lon, sample_id, output_dir):
         masks, confs = run_inference(model, enhanced_path)
         inference_mode = "ENHANCED"
         buffer_mask, best_mask, buffer_sqft, r1200, r2400 = select_masks(masks, lat)
+        del img, enhanced
+        gc.collect()
 
     # SAHI can be memory-heavy on small Render instances, so keep it opt-in.
     if best_mask is None and ENABLE_SAHI:
@@ -66,6 +71,7 @@ def run_single_pipeline(lat, lon, sample_id, output_dir):
         masks, confs = run_sahi(MODEL_PATH, img_path, YOLO_CONF + 0.05)
         inference_mode = "SAHI"
         buffer_mask, best_mask, buffer_sqft, r1200, r2400 = select_masks(masks, lat)
+        gc.collect()
 
     total_area, dist = 0.0, 0.0
     best_conf = max(confs) if confs else 0.0
@@ -82,6 +88,8 @@ def run_single_pipeline(lat, lon, sample_id, output_dir):
     img = cv2.imread(img_path)
     draw_overlay(img, green, red, r1200, r2400)
     cv2.imwrite(os.path.join(output_dir, f"{sample_id}_overlay.jpg"), img)
+    del img
+    gc.collect()
 
     json_data = {
         "sample_id": sample_id,

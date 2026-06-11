@@ -11,3 +11,13 @@ services:
         value: /tmp/Ultralytics
       - key: PYTHONUNBUFFERED
         value: "1"
+      - key: ENABLE_SAHI
+        value: "false"
+      - key: IMG_SIZE
+        value: "512"
+      - key: MAP_SCALE
+        value: "1"
+      - key: TORCH_NUM_THREADS
+        value: "1"
+      - key: TORCH_NUM_INTEROP_THREADS
+        value: "1"
