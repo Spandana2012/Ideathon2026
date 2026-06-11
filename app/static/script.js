@@ -1,5 +1,6 @@
 let selectedMarker = null;
 let map = null;
+let activePollTimer = null;
 
 const selectedLocationText = document.getElementById("selected-location");
 const latInput = document.getElementById("lat");
@@ -9,8 +10,19 @@ const runButton = document.getElementById("run-button");
 const mapBox = document.getElementById("map");
 const loadingOverlay = document.getElementById("loading-overlay");
 const loadingMessage = document.getElementById("loading-message");
-let loadingTimer = null;
-const ANALYSIS_TIMEOUT_MS = 120000;
+const loadingProgress = document.getElementById("loading-progress");
+
+const STAGE_LABELS = {
+    PENDING: "Waiting for the analysis worker...",
+    FETCHING_IMAGE: "Fetching satellite imagery...",
+    RUNNING_YOLO: "Running solar panel segmentation...",
+    BUFFER_VERIFICATION: "Applying buffer verification...",
+    IMAGE_ENHANCEMENT: "Enhancing image for fallback inference...",
+    RUNNING_SAHI: "Running SAHI fallback...",
+    GENERATING_OUTPUT: "Generating overlays and preparing report...",
+    COMPLETED: "Preparing report...",
+    FAILED: "Analysis failed."
+};
 
 mapBox.style.minHeight = "380px";
 mapBox.style.display = "block";
@@ -75,10 +87,7 @@ function setLocation(lat, lon) {
     if (selectedMarker) {
         selectedMarker.setLatLng([normalized.lat, normalized.lng]);
     } else {
-        selectedMarker = L.marker([normalized.lat, normalized.lng], {
-            draggable: true
-        }).addTo(map);
-
+        selectedMarker = L.marker([normalized.lat, normalized.lng], { draggable: true }).addTo(map);
         selectedMarker.on("dragend", event => {
             const position = event.target.getLatLng();
             const normalizedPosition = normalizeLatLng(position.lat, position.lng);
@@ -90,9 +99,12 @@ function setLocation(lat, lon) {
 }
 
 function resetSelection() {
+    stopPolling();
     latInput.value = "";
     lonInput.value = "";
     selectedLocationText.textContent = "Not set";
+    runButton.disabled = false;
+    hideLoading();
 
     if (map && selectedMarker) {
         map.removeLayer(selectedMarker);
@@ -111,10 +123,8 @@ function showStatusMessage(message) {
 }
 
 async function runAnalysis() {
-    const lat = latInput.value.trim();
-    const lon = lonInput.value.trim();
-    const latNumber = Number.parseFloat(lat);
-    const lonNumber = Number.parseFloat(lon);
+    const latNumber = Number.parseFloat(latInput.value.trim());
+    const lonNumber = Number.parseFloat(lonInput.value.trim());
 
     if (!Number.isFinite(latNumber) || !Number.isFinite(lonNumber)) {
         showError("Please enter both latitude and longitude or click a point on the map.");
@@ -126,36 +136,122 @@ async function runAnalysis() {
         return;
     }
 
+    stopPolling();
     runButton.disabled = true;
-    showLoading();
-    showStatusMessage("Fetching satellite imagery and preparing rooftop analysis...");
-
-    const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), ANALYSIS_TIMEOUT_MS);
+    showLoading("Starting analysis...", 4);
+    renderProgress({ status: "PENDING", progress: 0, message: "Submitting analysis job..." });
 
     try {
         const response = await fetch("/analyze", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ lat: latNumber, lon: lonNumber }),
-            signal: controller.signal
+            body: JSON.stringify({ lat: latNumber, lon: lonNumber })
         });
 
         if (!response.ok) {
             const errorText = await response.text();
-            throw new Error(parseApiError(errorText, response.status) || "Server error while running analysis.");
+            throw new Error(parseApiError(errorText) || "Server error while starting analysis.");
         }
 
         const data = await response.json();
-        renderResult(data, latNumber, lonNumber);
+        pollStatus(data.job_id, latNumber, lonNumber);
     } catch (error) {
         console.error(error);
-        showError(formatAnalysisError(error));
-    } finally {
-        window.clearTimeout(timeoutId);
         runButton.disabled = false;
         hideLoading();
+        showError(formatAnalysisError(error));
     }
+}
+
+function pollStatus(jobId, lat, lon) {
+    const tick = async () => {
+        try {
+            const response = await fetch(`/status/${encodeURIComponent(jobId)}`, { cache: "no-store" });
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(parseApiError(errorText) || "Could not read analysis status.");
+            }
+
+            const status = await response.json();
+            renderProgress(status);
+            showLoading(status.message || STAGE_LABELS[status.status] || "Running analysis...", status.progress || 0);
+
+            if (status.status === "COMPLETED") {
+                stopPolling();
+                await loadResult(jobId, lat, lon);
+                return;
+            }
+
+            if (status.status === "FAILED") {
+                stopPolling();
+                runButton.disabled = false;
+                hideLoading();
+                showError(status.error || "Analysis failed. Please try another location.");
+            }
+        } catch (error) {
+            stopPolling();
+            runButton.disabled = false;
+            hideLoading();
+            showError(formatAnalysisError(error));
+        }
+    };
+
+    tick();
+    activePollTimer = window.setInterval(tick, 2000);
+}
+
+async function loadResult(jobId, lat, lon) {
+    const response = await fetch(`/result/${encodeURIComponent(jobId)}`, { cache: "no-store" });
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(parseApiError(errorText) || "Could not load final analysis result.");
+    }
+
+    const data = await response.json();
+    renderResult(data, lat, lon);
+    runButton.disabled = false;
+    hideLoading();
+}
+
+function stopPolling() {
+    window.clearInterval(activePollTimer);
+    activePollTimer = null;
+}
+
+function renderProgress(status) {
+    const stage = status.status || "PENDING";
+    const progress = clamp(Number(status.progress) || 0, 0, 100);
+    const message = status.message || STAGE_LABELS[stage] || "Running analysis...";
+
+    resultsDiv.innerHTML = `
+        <div class="result-card progress-card">
+            <div class="result-header">
+                <div>
+                    <h3>Analysis in progress</h3>
+                    <p class="result-description">${escapeHtml(message)} Job ${escapeHtml(status.job_id || "")}</p>
+                </div>
+                <span class="badge ok">${escapeHtml(stage.replaceAll("_", " "))}</span>
+            </div>
+            <div class="live-progress">
+                <div class="progress-ring large" style="--value: ${progress}%">
+                    <strong>${progress}%</strong>
+                </div>
+                <div class="stage-list">
+                    ${Object.entries(STAGE_LABELS).filter(([key]) => !["COMPLETED", "FAILED"].includes(key)).map(([key, label]) => `
+                        <div class="stage-item ${key === stage ? "active" : ""} ${isStageDone(key, stage) ? "done" : ""}">
+                            <span></span>
+                            <p>${escapeHtml(label)}</p>
+                        </div>
+                    `).join("")}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function isStageDone(stage, currentStage) {
+    const order = ["PENDING", "FETCHING_IMAGE", "RUNNING_YOLO", "BUFFER_VERIFICATION", "IMAGE_ENHANCEMENT", "RUNNING_SAHI", "GENERATING_OUTPUT", "COMPLETED"];
+    return order.indexOf(stage) < order.indexOf(currentStage);
 }
 
 function showError(message) {
@@ -172,62 +268,61 @@ function renderResult(data, lat, lon) {
     const confidence = formatNumber(confidenceNumber);
     const confidencePercent = clamp(Number.isFinite(confidenceNumber) ? confidenceNumber * 100 : 0, 0, 100);
     const area = formatNumber(data.area);
-    const distance = formatNumber(data.distance);
+    const capacity = formatNumber(data.capacity_estimate_kw);
     const jsonOutput = escapeHtml(JSON.stringify(data.json_output || data, null, 2));
     const verdict = data.has_solar
         ? "Solar panels detected in the selected rooftop buffer."
         : "No verifiable solar panel was detected for this location.";
     const detectedLabel = data.has_solar ? "Detected" : "Not detected";
-    const bufferLabel = data.status || "UNKNOWN";
     const statusTone = data.has_solar ? "success" : "warning";
 
     resultsDiv.innerHTML = `
         <div class="result-card">
             <div class="result-header">
                 <div>
-                    <h3>Analysis result</h3>
+                    <h3>Solar Detection Report</h3>
                     <p class="result-description">${escapeHtml(verdict)} Sample ${escapeHtml(data.sample_id || "WEB")} was analyzed at ${lat.toFixed(6)}, ${lon.toFixed(6)}.</p>
                 </div>
-                <span class="badge ${statusClass}">${escapeHtml(data.status || "UNKNOWN")}</span>
+                <span class="badge ${statusClass}">${escapeHtml(data.verification_status || data.status || "UNKNOWN")}</span>
             </div>
 
             <div class="result-metrics">
                 <article class="metric-card summary-card">
-                    <span>Result summary</span>
+                    <span>Solar detection status</span>
                     <strong>${escapeHtml(detectedLabel)}</strong>
-                    <p>Sample ${escapeHtml(data.sample_id || "WEB")} processed at ${lat.toFixed(6)}, ${lon.toFixed(6)} using ${escapeHtml(data.inference_mode || "N/A")} inference.</p>
+                    <p>Inference mode: ${escapeHtml(data.inference_mode || "N/A")}. Buffer used: ${escapeHtml(data.buffer_used ?? "N/A")} sq ft.</p>
                 </article>
 
                 <article class="metric-card ${statusTone}">
-                    <span class="metric-label">Solar detection status</span>
-                    <strong class="metric-value">${data.has_solar ? "Yes" : "No"}</strong>
-                    <div class="metric-track" style="--value: ${data.has_solar ? "100%" : "22%"}"><span></span></div>
-                </article>
-
-                <article class="metric-card">
-                    <span class="metric-label">Confidence score</span>
+                    <span class="metric-label">Confidence</span>
                     <div class="ring-wrap">
                         <div class="progress-ring" style="--value: ${confidencePercent}%"></div>
-                        <strong class="ring-value">${confidence}</strong>
+                        <strong class="ring-value count-up" data-count="${escapeHtml(confidenceNumber)}">${confidence}</strong>
                     </div>
                 </article>
 
                 <article class="metric-card">
-                    <span class="metric-label">Area estimation</span>
-                    <strong class="metric-value">${area}</strong>
+                    <span class="metric-label">Estimated PV Area</span>
+                    <strong class="metric-value"><span class="count-up" data-count="${escapeHtml(data.area)}">${area}</span> sqm</strong>
                     <div class="metric-track" style="--value: ${areaMetricWidth(data.area)}"><span></span></div>
                 </article>
 
                 <article class="metric-card">
-                    <span class="metric-label">Buffer verification</span>
-                    <strong class="metric-value">${escapeHtml(bufferLabel)}</strong>
+                    <span class="metric-label">Capacity Estimate</span>
+                    <strong class="metric-value"><span class="count-up" data-count="${escapeHtml(data.capacity_estimate_kw)}">${capacity}</span> kW</strong>
+                    <div class="metric-track" style="--value: ${areaMetricWidth(data.capacity_estimate_kw)}"><span></span></div>
+                </article>
+
+                <article class="metric-card">
+                    <span class="metric-label">Verification Status</span>
+                    <strong class="metric-value">${escapeHtml(data.verification_status || data.status || "UNKNOWN")}</strong>
                     <div class="metric-track" style="--value: ${data.has_solar ? "100%" : "35%"}"><span></span></div>
                 </article>
 
                 <article class="metric-card">
-                    <span class="metric-label">Distance from center</span>
-                    <strong class="metric-value">${distance} m</strong>
-                    <div class="metric-track" style="--value: ${distanceMetricWidth(data.distance)}"><span></span></div>
+                    <span class="metric-label">Inference Mode</span>
+                    <strong class="metric-value">${escapeHtml(data.inference_mode || "N/A")}</strong>
+                    <div class="metric-track" style="--value: ${data.inference_mode === "PRIMARY" ? "100%" : "72%"}"><span></span></div>
                 </article>
             </div>
 
@@ -251,42 +346,58 @@ function renderResult(data, lat, lon) {
             </div>
         </div>
     `;
+    animateCounters();
 }
 
-function showLoading() {
-    const messages = [
-        "Fetching satellite imagery...",
-        "Running segmentation...",
-        "Applying buffer verification...",
-        "Generating report..."
-    ];
-    let index = 0;
-
+function showLoading(message = "Running analysis...", progress = 0) {
     if (!loadingOverlay || !loadingMessage) {
         return;
     }
 
-    loadingMessage.textContent = messages[index];
+    loadingMessage.textContent = message;
+    if (loadingProgress) {
+        loadingProgress.style.width = `${clamp(progress, 3, 100)}%`;
+    }
     loadingOverlay.classList.add("active");
     loadingOverlay.setAttribute("aria-hidden", "false");
-
-    window.clearInterval(loadingTimer);
-    loadingTimer = window.setInterval(() => {
-        index = (index + 1) % messages.length;
-        loadingMessage.textContent = messages[index];
-    }, 1300);
 }
 
 function hideLoading() {
-    window.clearInterval(loadingTimer);
-    loadingTimer = null;
-
     if (!loadingOverlay) {
         return;
     }
 
     loadingOverlay.classList.remove("active");
     loadingOverlay.setAttribute("aria-hidden", "true");
+}
+
+function animateCounters() {
+    document.querySelectorAll(".count-up").forEach(node => {
+        const target = Number.parseFloat(node.dataset.count);
+        if (!Number.isFinite(target)) {
+            return;
+        }
+
+        const start = performance.now();
+        const duration = 900;
+        const decimals = Math.abs(target) < 10 ? 2 : 1;
+
+        const step = now => {
+            const progress = clamp((now - start) / duration, 0, 1);
+            const eased = 1 - Math.pow(1 - progress, 3);
+            node.textContent = (target * eased).toLocaleString(undefined, {
+                maximumFractionDigits: decimals
+            });
+
+            if (progress < 1) {
+                requestAnimationFrame(step);
+            } else {
+                node.textContent = formatNumber(target);
+            }
+        };
+
+        requestAnimationFrame(step);
+    });
 }
 
 function wireButtonRipple() {
@@ -318,15 +429,7 @@ function isValidLatLng(lat, lon) {
     return lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180;
 }
 
-function parseApiError(errorText, statusCode) {
-    if (statusCode === 503) {
-        return "Render returned 503 while running analysis. The service likely restarted or ran out of memory. Try again after redeploying with IMG_SIZE=512 and ENABLE_SAHI=false.";
-    }
-
-    if (statusCode === 429) {
-        return "Another analysis is already running. Please wait a few moments and try again.";
-    }
-
+function parseApiError(errorText) {
     try {
         const parsed = JSON.parse(errorText);
         return parsed.detail || errorText;
@@ -336,10 +439,6 @@ function parseApiError(errorText, statusCode) {
 }
 
 function formatAnalysisError(error) {
-    if (error?.name === "AbortError") {
-        return "Analysis timed out after 120 seconds. Render may still be restarting or the instance may not have enough memory for this request.";
-    }
-
     return error?.message || "Unable to complete analysis.";
 }
 
@@ -361,16 +460,6 @@ function areaMetricWidth(value) {
     }
 
     return `${clamp(number / 2, 24, 100)}%`;
-}
-
-function distanceMetricWidth(value) {
-    const number = Number(value);
-
-    if (!Number.isFinite(number) || number <= 0) {
-        return "18%";
-    }
-
-    return `${clamp(100 - number, 22, 100)}%`;
 }
 
 function clamp(value, min, max) {

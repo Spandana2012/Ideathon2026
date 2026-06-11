@@ -21,3 +21,5 @@ services:
         value: "1"
       - key: TORCH_NUM_INTEROP_THREADS
         value: "1"
+      - key: ANALYSIS_WORKERS
+        value: "1"

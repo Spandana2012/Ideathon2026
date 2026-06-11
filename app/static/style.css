@@ -880,11 +880,94 @@ pre {
 
 .progress-track span {
     display: block;
-    width: 42%;
+    width: 4%;
     height: 100%;
     border-radius: inherit;
     background: linear-gradient(90deg, var(--blue), var(--gold), var(--orange));
-    animation: progressSweep 1.25s ease-in-out infinite;
+    transition: width 0.35s ease;
+}
+
+.progress-card {
+    background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.64)),
+        radial-gradient(circle at 88% 0%, rgba(56, 189, 248, 0.15), transparent 34%),
+        radial-gradient(circle at 8% 12%, rgba(250, 204, 21, 0.2), transparent 30%);
+}
+
+.live-progress {
+    display: grid;
+    grid-template-columns: 160px minmax(0, 1fr);
+    gap: 24px;
+    align-items: center;
+    margin-top: 24px;
+}
+
+.progress-ring.large {
+    position: relative;
+    width: 150px;
+    height: 150px;
+    margin: 0 auto;
+}
+
+.progress-ring.large::after {
+    width: 112px;
+    height: 112px;
+}
+
+.progress-ring.large strong {
+    position: absolute;
+    z-index: 1;
+    color: #0f172a;
+    font-size: 1.55rem;
+    font-weight: 900;
+}
+
+.stage-list {
+    display: grid;
+    gap: 10px;
+}
+
+.stage-item {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr);
+    gap: 10px;
+    align-items: center;
+    min-height: 36px;
+    padding: 8px 10px;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.54);
+    color: #475569;
+    font-weight: 800;
+}
+
+.stage-item span {
+    width: 14px;
+    height: 14px;
+    margin: 0 auto;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.42);
+}
+
+.stage-item.active {
+    border-color: rgba(249, 115, 22, 0.42);
+    color: #9a3412;
+    background: rgba(255, 247, 237, 0.78);
+    box-shadow: 0 12px 28px rgba(249, 115, 22, 0.12);
+}
+
+.stage-item.active span {
+    background: #f97316;
+    box-shadow: 0 0 0 7px rgba(249, 115, 22, 0.14);
+}
+
+.stage-item.done span {
+    background: #16a34a;
+}
+
+.stage-item p {
+    min-width: 0;
+    overflow-wrap: anywhere;
 }
 
 @keyframes floatIn {
@@ -1016,6 +1099,10 @@ pre {
     .json-header {
         flex-direction: column;
         align-items: flex-start;
+    }
+
+    .live-progress {
+        grid-template-columns: 1fr;
     }
 }
 

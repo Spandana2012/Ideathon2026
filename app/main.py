@@ -18,4 +18,9 @@ templates = Jinja2Templates(directory="app/templates")
 def home(request: Request):
     return templates.TemplateResponse(request, "index.html")
 
+
+@app.get("/healthz")
+def healthz():
+    return {"status": "ok"}
+
 app.include_router(router)

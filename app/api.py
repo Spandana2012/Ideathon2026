@@ -1,18 +1,15 @@
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
 import os
 import time
-import traceback
-from threading import Lock
 from uuid import uuid4
 
-from pipeline_code.main import run_single_pipeline
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
+from app.jobs import AnalysisJob, jobs, submit_analysis_job
 
 router = APIRouter()
-analysis_lock = Lock()
 
 
-# ✅ DEFINE INPUT SCHEMA
 class InputSchema(BaseModel):
     lat: float
     lon: float
@@ -27,42 +24,51 @@ def analyze(data: InputSchema):
         raise HTTPException(status_code=422, detail="Longitude must be between -180 and 180.")
 
     sample_id = f"WEB_{int(time.time())}_{uuid4().hex[:8]}"
-
+    job_id = uuid4().hex
     output_dir = os.path.join("output_data", sample_id)
     os.makedirs(output_dir, exist_ok=True)
 
-    try:
-        if not analysis_lock.acquire(blocking=False):
-            raise HTTPException(
-                status_code=429,
-                detail="Another analysis is already running. Please try again in a few moments.",
-            )
+    submit_analysis_job(
+        AnalysisJob(
+            job_id=job_id,
+            lat=data.lat,
+            lon=data.lon,
+            sample_id=sample_id,
+            output_dir=output_dir,
+        )
+    )
 
-        try:
-            result_json = run_single_pipeline(
-                lat=data.lat,
-                lon=data.lon,
-                sample_id=sample_id,
-                output_dir=output_dir
-            )
-        finally:
-            analysis_lock.release()
-    except HTTPException:
-        raise
-    except Exception as exc:
-        print(traceback.format_exc(), flush=True)
-        raise HTTPException(status_code=500, detail=str(exc) or "Analysis failed.") from exc
+    return {"job_id": job_id, "status": "processing"}
+
+
+@router.get("/status/{job_id}")
+def get_status(job_id: str):
+    job = jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
 
     return {
-        "sample_id": sample_id,
-        "status": result_json["qc_status"],
-        "confidence": result_json["confidence"],
-        "area": result_json["pv_area_sqm_est"],
-        "distance": result_json["euclidean_distance_m_est"],
-        "has_solar": result_json["has_solar"],
-        "inference_mode": result_json["image_metadata"]["inference_mode"],
-        "original_image": f"/output/{sample_id}/{sample_id}.jpg",
-        "overlay_image": f"/output/{sample_id}/{sample_id}_overlay.jpg",
-        "json_url": f"/output/{sample_id}/result.json",
-        "json_output": result_json
+        "job_id": job.job_id,
+        "sample_id": job.sample_id,
+        "status": job.state.value,
+        "progress": job.progress,
+        "message": job.message,
+        "error": job.error,
+        "created_at": job.created_at,
+        "updated_at": job.updated_at,
     }
+
+
+@router.get("/result/{job_id}")
+def get_result(job_id: str):
+    job = jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    if job.state.value == "FAILED":
+        raise HTTPException(status_code=500, detail=job.error or "Analysis failed.")
+
+    if job.result is None:
+        raise HTTPException(status_code=202, detail="Analysis is still processing.")
+
+    return job.result
