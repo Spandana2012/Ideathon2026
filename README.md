@@ -1,5 +1,5 @@
 ☀️ Helio Yajna – Solar Panel Detection
-
+Deployed On Render: https://ideathon2026.onrender.com/
 Hackathon Submission | Team HELIO_YAJNA
 
 🔍 Project Overview (For Evaluators)
